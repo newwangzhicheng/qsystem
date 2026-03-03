@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package query;
+
+// 生成接口存放的位置
+option go_package = "./internal/pb";
+
+// 要实现的接口，类型必须是 message
+service QueryService {
+  rpc SubmitQuery (QueryRequest) returns (QueryResponse);
+  rpc GetQueryStatus (QueryStatusRequest) returns (QueryStatusResponse);
+}
+
+message QueryRequest {
+  // 不是赋值，是压缩的唯一ID
+  string output = 1;
+}
+
+message QueryResponse {
+  string query_id = 1;
+}
+
+message QueryStatusRequest {
+  string query_id = 1;
+}
+
+message QueryStatusResponse {
+  string status = 1;
+  string result = 2;
+}
