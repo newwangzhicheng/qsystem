@@ -15,13 +15,31 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
+	/** Redis 服务 */
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379",
+		Password: "",
+		DB:       0,
+	})
+	// ping 确认连上，给2秒确认时间
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := rdb.Ping(ctx).Result(); err != nil {
+		log.Fatalf("Redis 服务连接不上")
+	}
+	log.Printf("成功连接到 Redis 服务器")
+	defer func() {
+		log.Printf("关闭 Redis 连接")
+		rdb.Close()
+	}()
 	/** 启动 gRPC */
-	queryService := service.NewQueryServiceServer()
+	queryService := service.NewQueryServiceServer(rdb)
 
 	// 创建 gRPC 引擎
 	grpcServer := grpc.NewServer()
@@ -77,7 +95,7 @@ func main() {
 	log.Printf("正在关闭服务器...")
 
 	// 给服务器5秒关闭
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := serv.Shutdown(ctx); err != nil {

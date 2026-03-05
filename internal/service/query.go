@@ -2,31 +2,32 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"qsystem/internal/pb"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 type QueryServiceServer struct {
 	pb.UnimplementedQueryServiceServer
-
-	// TODO 生产环境替换为 radis
-	store sync.Map
+	rdb *redis.Client
 }
 
 type StoreItem struct {
-	Status string // pending processing succeed failed notFound
-	Result string
+	Status string `json:"status"` // pending processing succeed failed notFound
+	Result string `json:"result"`
 }
 
 // NewQueryServiceServer 构造函数
-func NewQueryServiceServer() *QueryServiceServer {
-	return &QueryServiceServer{}
+func NewQueryServiceServer(rdb *redis.Client) *QueryServiceServer {
+	return &QueryServiceServer{
+		rdb: rdb,
+	}
 }
 
 // SubmitQuery 业务逻辑
@@ -36,7 +37,11 @@ func (s *QueryServiceServer) SubmitQuery(ctx context.Context, req *pb.QueryReque
 	}
 
 	queryId := uuid.New().String()
-	s.store.Store(queryId, &StoreItem{Status: "PENDING", Result: ""})
+	initialState := StoreItem{Status: "PENDING", Result: ""}
+
+	if err := s.saveToRedis(ctx, queryId, initialState); err != nil {
+		return nil, err
+	}
 
 	// 启动异步携程执行查询
 	contextBg := context.Background()
@@ -50,32 +55,55 @@ func (s *QueryServiceServer) SubmitQuery(ctx context.Context, req *pb.QueryReque
 // GetQueryStatus 查询执行状态
 func (s *QueryServiceServer) GetQueryStatus(ctx context.Context, req *pb.QueryStatusRequest) (*pb.QueryStatusResponse, error) {
 	queryId := req.QueryId
-	val, exists := s.store.Load(queryId)
-	if !exists {
-		return &pb.QueryStatusResponse{
-			Status: "NotFound",
-		}, nil
+	jsonData, err := s.rdb.Get(ctx, s.genKey(queryId)).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return &pb.QueryStatusResponse{
+				Status: "NOTFOUND",
+			}, err
+		}
+		return nil, errors.New("读取Redis数据失败")
 	}
 
-	item := val.(*StoreItem)
+	var state StoreItem
+	if err := json.Unmarshal([]byte(jsonData), &state); err != nil {
+		return nil, errors.New("解析Redis数据失败")
+	}
 
 	return &pb.QueryStatusResponse{
-		Status: item.Status,
-		Result: item.Result,
+		Status: state.Status,
+		Result: state.Result,
 	}, nil
+}
+
+// 保存到redis
+func (s *QueryServiceServer) saveToRedis(ctx context.Context, queryId string, state StoreItem) error {
+	jsonData, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	err = s.rdb.Set(ctx, s.genKey(queryId), jsonData, 24*time.Hour).Err()
+	return err
 }
 
 // 真正执行查询的任务
 func (s *QueryServiceServer) executeQuery(ctx context.Context, queryId string, output string) {
 	// TODO 先模拟查询
-	time.Sleep(40 * time.Second)
+	time.Sleep(5 * time.Second)
 
-	result := &StoreItem{
+	state := StoreItem{
 		Status: "PROCESSING",
 		Result: fmt.Sprintf(`"{ Link: %s }""`, output),
 	}
 
-	s.store.Store(queryId, result)
+	if err := s.saveToRedis(ctx, queryId, state); err != nil {
+		log.Printf("%v 任务完成，写入Redis失败: %v", queryId, err)
+		return
+	}
 
 	log.Printf("%s 查询完成", queryId)
+}
+
+func (s *QueryServiceServer) genKey(queryId string) string {
+	return "queryId:" + queryId
 }
