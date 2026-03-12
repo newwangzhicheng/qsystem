@@ -11,22 +11,31 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 )
+
+// KafkaTaskMessage Kafka信息
+type KafkaTaskMessage struct {
+	QueryId string `json:"query_id"`
+	Output  string `json:"output"`
+}
 
 type QueryServiceServer struct {
 	pb.UnimplementedQueryServiceServer
-	rdb *redis.Client
+	rdb         *redis.Client
+	kafkaWriter *kafka.Writer // 依赖注入
 }
 
 type StoreItem struct {
-	Status string `json:"status"` // pending processing succeed failed notFound
+	Status string `json:"status"` // pending processing completed notFound
 	Result string `json:"result"`
 }
 
 // NewQueryServiceServer 构造函数
-func NewQueryServiceServer(rdb *redis.Client) *QueryServiceServer {
+func NewQueryServiceServer(rdb *redis.Client, kw *kafka.Writer) *QueryServiceServer {
 	return &QueryServiceServer{
-		rdb: rdb,
+		rdb:         rdb,
+		kafkaWriter: kw,
 	}
 }
 
@@ -44,8 +53,27 @@ func (s *QueryServiceServer) SubmitQuery(ctx context.Context, req *pb.QueryReque
 	}
 
 	// 启动异步携程执行查询
-	contextBg := context.Background()
-	go s.executeQuery(contextBg, queryId, req.Output)
+	//contextBg := context.Background()
+	//go s.executeQuery(contextBg, queryId, req.Output)
+
+	/** 把任务丢进Kafka */
+	taskMsg := KafkaTaskMessage{
+		QueryId: queryId,
+		Output:  req.Output,
+	}
+	// 序列化
+	taskMsgBytes, err := json.Marshal(taskMsg)
+	if err != nil {
+		return nil, fmt.Errorf("投递任务消息序列化失败；%w", err)
+	}
+	// 将消息丢进去
+	err = s.kafkaWriter.WriteMessages(context.Background(), kafka.Message{
+		Key:   []byte(queryId),
+		Value: taskMsgBytes,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("投递任务到消息队列失败: %w", err)
+	}
 
 	return &pb.QueryResponse{
 		QueryId: queryId,
@@ -60,7 +88,7 @@ func (s *QueryServiceServer) GetQueryStatus(ctx context.Context, req *pb.QuerySt
 		if err == redis.Nil {
 			return &pb.QueryStatusResponse{
 				Status: "NOTFOUND",
-			}, err
+			}, nil
 		}
 		return nil, errors.New("读取Redis数据失败")
 	}

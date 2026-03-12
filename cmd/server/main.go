@@ -12,10 +12,12 @@ import (
 	"qsystem/api/handler"
 	"qsystem/internal/pb"
 	"qsystem/internal/service"
+	"qsystem/internal/worker"
 	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -38,8 +40,36 @@ func main() {
 		log.Printf("关闭 Redis 连接")
 		rdb.Close()
 	}()
+
+	/** Kafka 服务 */
+	// 生产者
+	kafkaBroker := []string{"localhost:9092"}
+	topicName := "query-tasks"
+	kafkaWriter := &kafka.Writer{
+		Addr:                   kafka.TCP(kafkaBroker[0]),
+		Topic:                  topicName,
+		Balancer:               &kafka.LeastBytes{},
+		AllowAutoTopicCreation: true,
+	}
+	defer kafkaWriter.Close()
+	// 消费者
+	kafkaReader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:  kafkaBroker,
+		GroupID:  "query-worker-group",
+		Topic:    topicName,
+		MinBytes: 10e3,
+		MaxBytes: 10e6,
+	})
+	defer kafkaReader.Close()
+	// 装配，后台启动worker
+	queryWorker := worker.NewQueryWorker(rdb, kafkaReader)
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	// 启动worker死循环
+	go queryWorker.Start(workerCtx)
+
 	/** 启动 gRPC */
-	queryService := service.NewQueryServiceServer(rdb)
+	queryService := service.NewQueryServiceServer(rdb, kafkaWriter)
 
 	// 创建 gRPC 引擎
 	grpcServer := grpc.NewServer()
