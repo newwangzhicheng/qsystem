@@ -5,22 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"qsystem/internal/model"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 )
-
-// KafkaTaskMessage Kafka信息
-type KafkaTaskMessage struct {
-	QueryId string `json:"query_id"`
-	Output  string `json:"output"`
-}
-
-type StoreItem struct {
-	Status string `json:"status"` // pending processing succeed failed notFound
-	Result string `json:"result"`
-}
 
 type QueryWorker struct {
 	rdb         *redis.Client
@@ -48,7 +38,7 @@ func (w *QueryWorker) Start(ctx context.Context) {
 			continue
 		}
 		// 解析数据
-		var taskMsg KafkaTaskMessage
+		var taskMsg model.KafkaTaskMessage
 		if err := json.Unmarshal(msg.Value, &taskMsg); err != nil {
 			log.Printf("[worker] 解析 Kafka 消息失败，废弃的消息：%s", string(msg.Value))
 			err = w.kafkaReader.CommitMessages(ctx, msg) // 确认掉垃圾消息
@@ -58,7 +48,7 @@ func (w *QueryWorker) Start(ctx context.Context) {
 			continue
 		}
 		// 更新任务
-		err = w.saveToRedis(ctx, taskMsg.QueryId, StoreItem{
+		err = w.saveToRedis(ctx, taskMsg.QueryId, model.StoreItem{
 			Status: "PROCESSING",
 			Result: "",
 		})
@@ -69,7 +59,7 @@ func (w *QueryWorker) Start(ctx context.Context) {
 		result := w.executeQuery(ctx, taskMsg.QueryId, taskMsg.Output)
 
 		// 更新任务
-		err = w.saveToRedis(ctx, taskMsg.QueryId, StoreItem{
+		err = w.saveToRedis(ctx, taskMsg.QueryId, model.StoreItem{
 			Status: "COMPLETED",
 			Result: result,
 		})
@@ -84,20 +74,6 @@ func (w *QueryWorker) Start(ctx context.Context) {
 			log.Printf("[worker] 任务 %s 完成", taskMsg.QueryId)
 		}
 	}
-}
-
-// 保存到redis
-func (w *QueryWorker) saveToRedis(ctx context.Context, queryId string, state StoreItem) error {
-	jsonData, err := json.Marshal(state)
-	if err != nil {
-		return err
-	}
-	err = w.rdb.Set(ctx, w.genKey(queryId), jsonData, 24*time.Hour).Err()
-	return err
-}
-
-func (w *QueryWorker) genKey(queryId string) string {
-	return "queryId:" + queryId
 }
 
 // 真正执行查询的任务
