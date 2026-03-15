@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -76,7 +75,7 @@ func (s *QueryServiceServer) GetQueryStatus(ctx context.Context, req *pb.QuerySt
 	queryId := req.QueryId
 	state, err := s.repo.GetState(ctx, queryId)
 	if err != nil {
-		log.Printf("查询失败，%w\n", err)
+		log.Printf("查询失败，%s\n", err)
 		return nil, fmt.Errorf("查询失败，%w", err)
 	}
 
@@ -96,7 +95,7 @@ func (s *QueryServiceServer) executeQuery(ctx context.Context, queryId string, o
 		Result: fmt.Sprintf(`"{ Link: %s }""`, output),
 	}
 
-	if err := s.saveToRedis(ctx, queryId, state); err != nil {
+	if err := s.repo.SaveAdnBroadcast(ctx, queryId, state); err != nil {
 		log.Printf("%v 任务完成，写入Redis失败: %v", queryId, err)
 		return
 	}

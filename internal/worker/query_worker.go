@@ -6,20 +6,20 @@ import (
 	"fmt"
 	"log"
 	"qsystem/internal/model"
+	"qsystem/internal/repository"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 )
 
 type QueryWorker struct {
-	rdb         *redis.Client
+	repo        *repository.TaskRepository
 	kafkaReader *kafka.Reader
 }
 
-func NewQueryWorker(rdb *redis.Client, kr *kafka.Reader) *QueryWorker {
+func NewQueryWorker(repo *repository.TaskRepository, kr *kafka.Reader) *QueryWorker {
 	return &QueryWorker{
-		rdb:         rdb,
+		repo:        repo,
 		kafkaReader: kr,
 	}
 }
@@ -48,7 +48,7 @@ func (w *QueryWorker) Start(ctx context.Context) {
 			continue
 		}
 		// 更新任务
-		err = w.saveToRedis(ctx, taskMsg.QueryId, model.StoreItem{
+		err = w.repo.SaveAdnBroadcast(ctx, taskMsg.QueryId, model.StoreItem{
 			Status: "PROCESSING",
 			Result: "",
 		})
@@ -59,7 +59,7 @@ func (w *QueryWorker) Start(ctx context.Context) {
 		result := w.executeQuery(ctx, taskMsg.QueryId, taskMsg.Output)
 
 		// 更新任务
-		err = w.saveToRedis(ctx, taskMsg.QueryId, model.StoreItem{
+		err = w.repo.SaveAdnBroadcast(ctx, taskMsg.QueryId, model.StoreItem{
 			Status: "COMPLETED",
 			Result: result,
 		})

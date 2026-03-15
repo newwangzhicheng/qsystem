@@ -39,7 +39,10 @@ func (r *TaskRepository) GetState(ctx context.Context, queryId string) (*model.S
 	jsonData, err := r.rdb.Get(ctx, redisKey).Result()
 	if err != nil {
 		if err == redis.Nil {
-			return nil, nil // 查询不到结果
+			return &model.StoreItem{
+				Status: "NOTFOUND",
+				Result: "",
+			}, nil // 查询不到结果
 		}
 		return nil, fmt.Errorf("读取不到 redis：%w", err)
 	}

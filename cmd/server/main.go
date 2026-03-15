@@ -11,6 +11,7 @@ import (
 	"qsystem/api"
 	"qsystem/api/handler"
 	"qsystem/internal/pb"
+	"qsystem/internal/repository"
 	"qsystem/internal/service"
 	"qsystem/internal/worker"
 	"syscall"
@@ -41,6 +42,8 @@ func main() {
 		rdb.Close()
 	}()
 
+	repo := repository.NewTaskRepository(rdb)
+
 	/** Kafka 服务 */
 	// 生产者
 	kafkaBroker := []string{"localhost:9092"}
@@ -62,14 +65,14 @@ func main() {
 	})
 	defer kafkaReader.Close()
 	// 装配，后台启动worker
-	queryWorker := worker.NewQueryWorker(rdb, kafkaReader)
+	queryWorker := worker.NewQueryWorker(repo, kafkaReader)
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 	// 启动worker死循环
 	go queryWorker.Start(workerCtx)
 
 	/** 启动 gRPC */
-	queryService := service.NewQueryServiceServer(rdb, kafkaWriter)
+	queryService := service.NewQueryServiceServer(repo, kafkaWriter)
 
 	// 创建 gRPC 引擎
 	grpcServer := grpc.NewServer()
