@@ -108,7 +108,7 @@ func main() {
 	// 实例化 gRPC 客户端桩
 	grpcClient := pb.NewQueryServiceClient(grpcConn)
 	// 依赖注入
-	queryHandler := handler.NewQueryHandler(grpcClient)
+	queryHandler := handler.NewQueryHandler(grpcClient, repo)
 	router := api.SetupRouter(queryHandler)
 
 	// 服务
